@@ -1,8 +1,8 @@
 [package]
-name = "greeter-minimum"
+name = "aio"
 version = "0.1.0"
-authors = ["FUJITA Tomonori <fujita.tomonori@gmail.com>"]
-edition = "2018"
+authors = ["reganzm 626692024@qq.com"]
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -21,4 +21,5 @@ clap = "2.0"
 polling = "2.0.2"
 pin-utils = "0.1"
 waker-fn = "1"
-socket2 = "0.4"
+socket2 = {version="0.3.18", features = ["reuseport"]}
+scoped-tls = "1"

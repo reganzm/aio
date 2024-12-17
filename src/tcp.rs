@@ -10,7 +10,7 @@ use std::{
 use futures::Stream;
 use socket2::{Domain, Protocol, Socket, Type};
 
-//use crate::{reactor::get_reactor, reactor::Reactor};
+use crate::reactor::{Reactor, get_reactor};
 
 #[derive(Debug)]
 pub struct TcpListener {
@@ -25,12 +25,11 @@ impl TcpListener {
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "empty address"))?;
 
-        let domain = if addr.is_ipv6() {
-            Domain::IPV6
-        } else {
-            Domain::IPV4
+        let domain = match addr {
+            SocketAddr::V4(_) => Domain::ipv4(),
+            SocketAddr::V6(_) => Domain::ipv6(),
         };
-        let sk = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+        let sk = Socket::new(domain, Type::stream(), Some(Protocol::tcp()))?;
         let addr = socket2::SockAddr::from(addr);
         sk.set_reuse_address(true)?;
         sk.bind(&addr)?;
@@ -72,7 +71,7 @@ impl Stream for TcpListener {
 
 #[derive(Debug)]
 pub struct TcpStream {
-    stream: StdTcpStream,
+    pub stream: StdTcpStream,
 }
 
 impl From<StdTcpStream> for TcpStream {
