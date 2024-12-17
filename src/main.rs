@@ -1,19 +1,36 @@
 use clap::clap_app;
 use futures_util::stream::StreamExt;
+use tcp::TcpListener;
 use std::{env, thread};
 
 mod runtime;
+mod tcp;
 
 async fn serve() {
-    let mut listener = runtime::Async::<std::net::TcpListener>::new(proto::create_listen_socket());
+    let mut listener = TcpListener::bind("127.0.0.1:30000").unwrap();
     while let Some(ret) = listener.next().await {
-        if let Ok(stream) = ret {
-            runtime::spawn(async move {
-                //proto::client::Client::new(stream).serve().await;
-            });
+        if let Ok((mut stream, addr)) = ret {
+            println!("accept a new connection from {} successfully", addr);
+            let f = async move {
+                let mut buf = [0; 4096];
+                loop {
+                    match stream.read(&mut buf).await {
+                        Ok(n) => {
+                            if n == 0 || stream.write_all(&buf[..n]).await.is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => {
+                            return;
+                        }
+                    }
+                }
+            };
+            //Executor::spawn(f);
         }
     }
 }
+
 
 fn main() {
     let matches = clap_app!(greeter =>
