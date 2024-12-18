@@ -84,7 +84,6 @@ impl From<StdTcpStream> for TcpStream {
 
 impl Drop for TcpStream {
     fn drop(&mut self) {
-        println!("drop");
         let reactor = get_reactor();
         reactor.borrow_mut().delete(self.stream.as_raw_fd());
     }

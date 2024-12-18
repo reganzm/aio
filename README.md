@@ -5,7 +5,7 @@ a simple io using epoll
 run hello.rs
 the server listened on 127.0.0.1:12345
 on browser push a request `http://127.0.0.1:12345`
-you will get the result hello.html like bellow
+you will get the result hello.html as follows
 ```
 ![](./imgs/reactor_epoll.png)
 
