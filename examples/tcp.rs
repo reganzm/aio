@@ -1,12 +1,12 @@
 use aio::runtime;
 use clap::clap_app;
 use futures_util::stream::StreamExt;
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Socket, Type};
 use std::{env, net::SocketAddr, thread};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub fn create_listen_socket() -> std::net::TcpListener {
-    let addr: SocketAddr = "[::]:50000".parse().unwrap();
+    let addr: SocketAddr = "[::]:12345".parse().unwrap();
     println!("{:?}", addr);
     let sock = Socket::new(
         match addr {
@@ -27,16 +27,16 @@ pub fn create_listen_socket() -> std::net::TcpListener {
     sock.into_tcp_listener()
 }
 
-const RESPONSE_HEADER: &str = "HTTP/1.1 200 OK\r\n";
+const RESPONSE_HEADER: &str = "HTTP/1.1 200 OK";
 const HELLO: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Hello!</title>
+    <title>Async rust future</title>
   </head>
   <body>
-    <p>Hi!</p>
+    <p>hello,aio!</p>
   </body>
 </html>
 "#;
@@ -48,19 +48,17 @@ async fn serve() {
         if let Ok(mut stream) = ret {
             let f = async move {
                 let mut buf = [0; 4096];
-                loop {
-                    match stream.read(&mut buf).await {
-                        Ok(n) => {
-                            let response = format!(
-                                "{RESPONSE_HEADER}\r\nContent-Lenghth:{HELLO_LEN}\r\n\r\n{HELLO}"
-                            );
-                            if n == 0 || stream.write_all(response.as_bytes()).await.is_err() {
-                                return;
-                            }
-                        }
-                        Err(_) => {
+                match stream.read(&mut buf).await {
+                    Ok(n) => {
+                        let response = format!(
+                            "{RESPONSE_HEADER}\r\nContent-Lenghth:{HELLO_LEN}\r\n\r\n{HELLO}"
+                        );
+                        if n == 0 || stream.write_all(response.as_bytes()).await.is_err() {
                             return;
                         }
+                    }
+                    Err(_) => {
+                        return;
                     }
                 }
             };
