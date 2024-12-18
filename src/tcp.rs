@@ -33,13 +33,13 @@ impl TcpListener {
         let addr = socket2::SockAddr::from(addr);
         sk.set_reuse_address(true)?;
         sk.bind(&addr)?;
+        //backlog 参数定义了在内核中为该套接字维护的未完成连接队列的最大长度
         sk.listen(1024)?;
 
         // add fd to reactor
         let reactor = get_reactor();
         reactor.borrow_mut().add(sk.as_raw_fd());
 
-        println!("tcp bind with fd {}", sk.as_raw_fd());
         Ok(Self {
             reactor: Rc::downgrade(&reactor),
             listener: sk.into(),
@@ -85,6 +85,7 @@ impl From<StdTcpStream> for TcpStream {
 impl Drop for TcpStream {
     fn drop(&mut self) {
         let reactor = get_reactor();
+        // drop the fd from reactor
         reactor.borrow_mut().delete(self.stream.as_raw_fd());
     }
 }
@@ -98,16 +99,13 @@ impl tokio::io::AsyncRead for TcpStream {
         let fd = self.stream.as_raw_fd();
         unsafe {
             let b = &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]);
-            println!("read for fd {}", fd);
             match self.stream.read(b) {
                 Ok(n) => {
-                    println!("read for fd {} done, {}", fd, n);
                     buf.assume_init(n);
                     buf.advance(n);
                     Poll::Ready(Ok(()))
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    println!("read for fd {} done WouldBlock", fd);
                     // modify reactor to register interest
                     let reactor = get_reactor();
                     reactor
@@ -115,10 +113,7 @@ impl tokio::io::AsyncRead for TcpStream {
                         .modify_readable(self.stream.as_raw_fd(), cx);
                     Poll::Pending
                 }
-                Err(e) => {
-                    println!("read for fd {} done err", fd);
-                    Poll::Ready(Err(e))
-                }
+                Err(e) => Poll::Ready(Err(e)),
             }
         }
     }
