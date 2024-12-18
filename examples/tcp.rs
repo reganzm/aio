@@ -5,10 +5,9 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::{env, net::SocketAddr, thread};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-
 pub fn create_listen_socket() -> std::net::TcpListener {
-    let addr: SocketAddr = "[::]:50051".parse().unwrap();
-    println!("{:?}",addr);
+    let addr: SocketAddr = "[::]:50000".parse().unwrap();
+    println!("{:?}", addr);
     let sock = Socket::new(
         match addr {
             SocketAddr::V4(_) => Domain::ipv4(),
@@ -28,22 +27,20 @@ pub fn create_listen_socket() -> std::net::TcpListener {
     sock.into_tcp_listener()
 }
 
-// pub fn create_listen_socket() -> std::net::TcpListener {
-//     let addr: SocketAddr = "[::]:50051".parse().unwrap();
-//     println!("{:?}", addr);
-//     let domain = if addr.is_ipv6() {
-//         Domain::IPV6
-//     } else {
-//         Domain::IPV4
-//     };
-//     let sock = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).unwrap();
-//     sock.set_reuse_address(true).unwrap();
-//     sock.set_nonblocking(true).unwrap();
-//     sock.bind(&addr.into()).unwrap();
-//     sock.listen(98123).unwrap();
-
-//     sock.into()
-// }
+const RESPONSE_HEADER: &str = "HTTP/1.1 200 OK\r\n";
+const HELLO: &str = r#"
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Hello!</title>
+  </head>
+  <body>
+    <p>Hi!</p>
+  </body>
+</html>
+"#;
+const HELLO_LEN: usize = HELLO.len();
 
 async fn serve() {
     let mut listener = runtime::Async::<std::net::TcpListener>::new(create_listen_socket());
@@ -54,7 +51,10 @@ async fn serve() {
                 loop {
                     match stream.read(&mut buf).await {
                         Ok(n) => {
-                            if n == 0 || stream.write_all(&buf[..n]).await.is_err() {
+                            let response = format!(
+                                "{RESPONSE_HEADER}\r\nContent-Lenghth:{HELLO_LEN}\r\n\r\n{HELLO}"
+                            );
+                            if n == 0 || stream.write_all(response.as_bytes()).await.is_err() {
                                 return;
                             }
                         }
@@ -68,31 +68,6 @@ async fn serve() {
         }
     }
 }
-
-// async fn serve() {
-//     let mut listener = TcpListener::bind("127.0.0.1:30000").unwrap();
-//     while let Some(ret) = listener.next().await {
-//         if let Ok((mut stream, addr)) = ret {
-//             println!("accept a new connection from {} successfully", addr);
-//             let f = async move {
-//                 let mut buf = [0; 4096];
-//                 loop {
-//                     match stream.read(&mut buf).await {
-//                         Ok(n) => {
-//                             if n == 0 || stream.write_all(&buf[..n]).await.is_err() {
-//                                 return;
-//                             }
-//                         }
-//                         Err(_) => {
-//                             return;
-//                         }
-//                     }
-//                 }
-//             };
-//             runtime::spawn(f);
-//         }
-//     }
-// }
 
 fn main() {
     let matches = clap_app!(greeter =>

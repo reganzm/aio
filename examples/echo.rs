@@ -9,7 +9,20 @@ fn main() {
     let ex = Executor::new();
     ex.block_on(serve);
 }
-
+const RESPONSE_HEADER: &str = "HTTP/1.1 200 OK\r\n";
+const HELLO: &str = r#"
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Hello!</title>
+  </head>
+  <body>
+    <p>Hi!</p>
+  </body>
+</html>
+"#;
+const HELLO_LEN: usize = HELLO.len();
 async fn serve() {
     let mut listener = TcpListener::bind("127.0.0.1:30000").unwrap();
     while let Some(ret) = listener.next().await {
@@ -20,7 +33,10 @@ async fn serve() {
                 loop {
                     match stream.read(&mut buf).await {
                         Ok(n) => {
-                            if n == 0 || stream.write_all(&buf[..n]).await.is_err() {
+                            let response = format!(
+                                "{RESPONSE_HEADER}\r\nContent-Lenghth:{HELLO_LEN}\r\n\r\n{HELLO}"
+                            );
+                            if n == 0 || stream.write_all(response.as_bytes()).await.is_err() {
                                 return;
                             }
                         }
