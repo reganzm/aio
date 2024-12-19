@@ -1,19 +1,15 @@
-use std::net::SocketAddr;
-use socket2::{Domain, Socket, Type};
 use crate::runtime;
+use socket2::{Domain, Socket, Type};
+use std::net::SocketAddr;
 
-
-pub struct TcpListener{
-    host:&'static str,
-    port:u32
+pub struct TcpListener {
+    host: &'static str,
+    port: u32,
 }
 
-impl TcpListener{
-    pub fn bind(host:&'static str,port:u32)->runtime::Async<std::net::TcpListener>{
-        Self{
-            host,
-            port
-        }.create_listener()
+impl TcpListener {
+    pub fn bind(host: &'static str, port: u32) -> runtime::Async<std::net::TcpListener> {
+        Self { host, port }.create_listener()
     }
     fn create_listen_socket(&self) -> std::net::TcpListener {
         let addr: SocketAddr = format!("{0}:{1}", self.host, self.port).parse().unwrap();
@@ -34,7 +30,7 @@ impl TcpListener{
         sock.listen(32768).unwrap();
         sock.into_tcp_listener()
     }
-    pub fn create_listener(&self)->runtime::Async<std::net::TcpListener>{
+    pub fn create_listener(&self) -> runtime::Async<std::net::TcpListener> {
         runtime::Async::<std::net::TcpListener>::new(self.create_listen_socket())
     }
 }
