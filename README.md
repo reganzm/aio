@@ -9,3 +9,5 @@ you will get the result hello.html as follows
 ```
 ![](./imgs/reactor_epoll.png)
 
+### code structure
+![](./imgs/reactor_epoll_structure.png)
