@@ -13,10 +13,15 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use uring_sys::io_uring_prep_poll_add;
 
+/// Parking  : is same as reactor
 struct Parking {
+    // async kind
     kind: Option<Kind>,
+    // IoUring instance
     ring: IoUring,
+    // Poller instance
     poller: Poller,
+    // the mapping of fd->waker
     completion: rustc_hash::FxHashMap<u64, Completion>,
 }
 const NR_TASKS: usize = 2048;
@@ -25,6 +30,7 @@ thread_local! {
     static PARKING : RefCell<Parking> = {
         RefCell::new(Parking{
             kind: None,
+            // the ring buffer size is 4096
             ring: IoUring::new(4096).unwrap(),
             poller: Poller::new().unwrap(),
             completion: rustc_hash::FxHashMap::default(),
@@ -32,6 +38,7 @@ thread_local! {
     };
 
     static RUNNABLE : RefCell<VecDeque<Rc<Task>>> = {
+        // the task queue with capacity 2048
         RefCell::new(VecDeque::with_capacity(NR_TASKS))
     };
 
@@ -41,23 +48,29 @@ impl Parking {
     fn add<T: AsRawFd>(&mut self, a: &Async<T>) {
         let raw_fd = a.io.as_raw_fd();
         match self.kind.as_ref().unwrap() {
+            // epoll : first set nonblocking with true
             Kind::Epoll => {
                 a.set_nonblocking(true);
+                // then add the fd to the poller with none interest events
                 self.poller
                     .add(a.io.as_ref(), polling::Event::none(raw_fd as usize))
                     .unwrap();
             }
+            // io_uring : only set nonblocking with true
             Kind::UringPoll => a.set_nonblocking(true),
+            // async and hybrid: set nonblocking with false
             Kind::Async | Kind::Hybrid => a.set_nonblocking(false),
         }
     }
 
+    /// delete the fd from poller
     fn delete<T: AsRawFd>(&mut self, a: &Async<T>) {
         if let Kind::Epoll = self.kind.as_ref().unwrap() {
             self.poller.delete(a.io.as_ref()).unwrap();
         }
     }
 
+    /// modify the fd with readable or writable
     fn modify<T: AsRawFd>(&mut self, a: &Async<T>, cx: &mut Context, is_readable: bool) {
         let raw_fd = a.io.as_raw_fd() as u64;
         let c = Completion::new(Some(cx.waker().clone()));
@@ -81,6 +94,7 @@ impl Parking {
                         PollFlags::POLLOUT.bits()
                     };
                     io_uring_prep_poll_add(q.raw_mut(), raw_fd as i32, flags);
+                    // the user data is raw_fd
                     q.set_user_data(raw_fd as u64);
                     self.ring.submit_sqes().unwrap();
                 }
@@ -126,21 +140,29 @@ impl Parking {
 
 fn run_task(t: Rc<Task>) {
     let future = t.future.borrow_mut();
+    // use task it self as the waker
     let w = waker(t.clone());
+    // use waker construct the context
     let mut context = Context::from_waker(&w);
+    // poll the future
+    // toto , there can be optimizated
+    // when the future is not ready,it will push back to the task queue
     let _ = Pin::new(future).as_mut().poll(&mut context);
 }
 
+/// task is a wrapper of Future
 struct Task {
     future: RefCell<BoxFuture<'static, ()>>,
 }
 
 impl RcWake for Task {
+    // impl the wake_by_ref , push the task to the task queue
     fn wake_by_ref(arc_self: &Rc<Self>) {
         RUNNABLE.with(|runnable| runnable.borrow_mut().push_back(arc_self.clone()));
     }
 }
 
+/// spawn the future as a new task and push it to the task queue
 pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
     let t = Rc::new(Task {
         future: RefCell::new(future.boxed()),
@@ -148,6 +170,7 @@ pub fn spawn(future: impl Future<Output = ()> + Send + 'static) {
     RUNNABLE.with(|runnable| runnable.borrow_mut().push_back(t));
 }
 
+/// Async is a wrapper for non-blocking I/O
 pub struct Async<T: AsRawFd> {
     io: Box<T>,
     flags: iou::sqe::OFlag,
@@ -156,6 +179,7 @@ pub struct Async<T: AsRawFd> {
 impl<T: AsRawFd> Async<T> {
     pub fn new(io: T) -> Self {
         let raw_fd = io.as_raw_fd();
+        // set the file flags
         let a = Async {
             io: Box::new(io),
             flags: nix::fcntl::OFlag::from_bits(
@@ -163,6 +187,7 @@ impl<T: AsRawFd> Async<T> {
             )
             .unwrap(),
         };
+        // add the file describle to the parking
         PARKING.with(|parker| {
             parker.borrow_mut().add(&a);
         });
@@ -171,6 +196,7 @@ impl<T: AsRawFd> Async<T> {
 
     fn set_nonblocking(&self, enable: bool) {
         let raw_fd = self.io.as_raw_fd();
+        // set the non-blocking flag
         let flags = if enable {
             self.flags | nix::fcntl::OFlag::O_NONBLOCK
         } else {
@@ -179,10 +205,12 @@ impl<T: AsRawFd> Async<T> {
         nix::fcntl::fcntl(raw_fd, nix::fcntl::F_SETFL(flags)).unwrap();
     }
 
+    // check is the fd is complete
     fn has_completion(&self) -> bool {
         let raw_fd = self.io.as_raw_fd() as u64;
         PARKING.with(|parking| {
             let parking = parking.borrow_mut();
+            // check the completion
             parking.completion.contains_key(&raw_fd)
         })
     }
@@ -484,20 +512,25 @@ fn waker<W>(wake: Rc<W>) -> Waker
 where
     W: RcWake,
 {
+    // the data ptr
     let ptr = Rc::into_raw(wake) as *const ();
+    // the vtable
     let vtable = &Helper::<W>::VTABLE;
+    // construct the waker
     unsafe { Waker::from_raw(RawWaker::new(ptr, vtable)) }
 }
 
 #[allow(clippy::redundant_clone)] // The clone here isn't actually redundant.
 unsafe fn increase_refcount<T: RcWake>(data: *const ()) {
     // Retain Arc, but don't touch refcount by wrapping in ManuallyDrop
-    let arc = mem::ManuallyDrop::new(Rc::<T>::from_raw(data as *const T));
+    let arc = mem::ManuallyDrop::new(unsafe { Rc::<T>::from_raw(data as *const T) });
     // Now increase refcount, but don't drop new refcount either
     let _arc_clone: mem::ManuallyDrop<_> = arc.clone();
 }
 
-struct Helper<F>(F);
+
+/// A Helper struct to implement the RawWakerVTable to convert a waker to RawWaker
+struct Helper<T>(T);
 
 impl<T: RcWake> Helper<T> {
     const VTABLE: RawWakerVTable = RawWakerVTable::new(
@@ -508,26 +541,29 @@ impl<T: RcWake> Helper<T> {
     );
 
     unsafe fn clone_waker(data: *const ()) -> RawWaker {
-        increase_refcount::<T>(data);
+        unsafe {
+            increase_refcount::<T>(data);
+        }
         let vtable = &Helper::<T>::VTABLE;
         RawWaker::new(data, vtable)
     }
 
     unsafe fn wake(ptr: *const ()) {
-        let rc: Rc<T> = Rc::from_raw(ptr as *const T);
+        let rc: Rc<T> = unsafe { Rc::from_raw(ptr as *const T) };
         RcWake::wake(rc);
     }
 
     unsafe fn wake_by_ref(ptr: *const ()) {
-        let arc = ManuallyDrop::new(Rc::<T>::from_raw(ptr as *const T));
+        let arc = ManuallyDrop::new(unsafe { Rc::<T>::from_raw(ptr as *const T) });
         RcWake::wake_by_ref(&arc);
     }
 
     unsafe fn drop_waker(ptr: *const ()) {
-        drop(Rc::from_raw(ptr as *const Task));
+        drop(unsafe { Rc::from_raw(ptr as *const Task) });
     }
 }
 
+/// the struct of completion contains the waker and io's result
 #[derive(Debug)]
 pub struct Completion {
     waker: Option<Waker>,
@@ -545,6 +581,7 @@ impl Completion {
     fn complete(&mut self, result: std::io::Result<usize>) {
         self.result = Some(result);
         if let Some(w) = self.waker.take() {
+            // call the Waker's wake method to notify the executor
             w.wake();
         }
     }
@@ -567,6 +604,7 @@ impl Runtime {
         Runtime { kind }
     }
 
+    /// pin the current thread to the specific CPU
     pub fn pin_to_cpu(self, id: usize) -> Self {
         core_affinity::set_for_current(core_affinity::CoreId { id });
         self
@@ -581,13 +619,16 @@ impl Runtime {
             parking.borrow_mut().kind = Some(self.kind);
         });
 
+        // construct the waker
         let waker = waker_fn::waker_fn(|| {});
         let cx = &mut Context::from_waker(&waker);
-
+        // call the f and return top Future
         let fut = f();
         pin_utils::pin_mut!(fut);
 
+        // loop the top Future and do all the io tasks
         loop {
+            // if the top Future is ready , break the loop
             if fut.as_mut().poll(cx).is_ready() {
                 break;
             }
@@ -595,19 +636,20 @@ impl Runtime {
             loop {
                 let mut ready =
                     RUNNABLE.with(|runnable| runnable.replace(VecDeque::with_capacity(NR_TASKS)));
-
+                // if the task queue is empty,break the inner task loop
                 if ready.is_empty() {
                     break;
                 }
-
+                // else,run all tasks
                 for t in ready.drain(..) {
                     run_task(t);
                 }
             }
-
+            // if top Future is ready , break the loop
             if fut.as_mut().poll(cx).is_ready() {
                 break;
             }
+            // if not break the loop,then wait for io events
             PARKING.with(|parking| {
                 parking.borrow_mut().wait(true);
             });
